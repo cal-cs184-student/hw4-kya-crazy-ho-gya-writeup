@@ -1,2 +1,530 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CS184 HW4 — Cloth Simulation · Rakesh Mehta</title><style>@page {size: Letter; margin: .55in .6in .6in; @bottom-right {content: counter(page); font:9pt sans-serif;color:#596579;}} *{box-sizing:border-box} body{margin:0;background:#edf1f5;color:#18293a;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.46} a{color:#155c98;overflow-wrap:anywhere} .report-page{max-width:1000px;background:white;margin:28px auto;padding:38px 48px;border-top:4px solid #c49430;box-shadow:0 3px 20px #23334412} .eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#587186;margin:0 0 10px} h1{font-size:29px;line-height:1.12;color:#173950;margin:0 0 18px} p{margin:10px 0} .equation{display:block;padding:8px;background:#f0f4f7;text-align:center;margin:8px 0} table{width:100%;border-collapse:collapse} table.figures{table-layout:fixed;margin:12px 0} .figures td{vertical-align:top;padding:5px} figure{margin:0;text-align:center} figure img{max-width:100%;max-height:340px;object-fit:contain} figcaption{font-size:12px;line-height:1.3;color:#405c6f;margin:5px 0 9px} .wide{text-align:center;margin:12px 0}.wide img{max-height:320px} .data{font-size:13px;margin:12px 0}.data th,.data td{border:1px solid #cfdae1;padding:7px;text-align:left}.data th{background:#eef3f6} ul{padding-left:20px} @media(max-width:700px){.report-page{padding:22px 14px;margin:0 0 18px}.figures td{padding:2px}figcaption{font-size:10px}h1{font-size:25px}} @media print{body{background:white;font-size:10pt;line-height:1.32}.report-page{page-break-after:always;max-width:none;margin:0;padding:0;border:0;box-shadow:none}.report-page:last-child{page-break-after:auto}.eyebrow{font-size:8pt;margin-bottom:6pt}h1{font-size:21pt;margin-bottom:11pt}p{margin:7pt 0}table.figures{margin:7pt 0}.figures td{padding:3pt}figure img{max-height:2.1in}figcaption{font-size:8pt;margin:4pt 0 7pt}.wide img{max-height:2.8in}.data{font-size:9pt;margin:8pt 0}.data th,.data td{padding:4pt}figure,table,tr{break-inside:avoid}a{color:#155c98;text-decoration:none}}
-</style></head><body><section class="report-page" id="overview"><p class="eyebrow">CS 184 · HW4 · Cloth simulation</p><h1>Overview</h1><p><strong>Rakesh Mehta · Team: kya-crazy-ho-gya</strong></p><p>Public webpage: <a href="https://cal-cs184-student.github.io/hw4-kya-crazy-ho-gya-writeup/">https://cal-cs184-student.github.io/hw4-kya-crazy-ho-gya-writeup/</a></p><p><a href="https://github.com/cal-cs184-student/hw4-kya-crazy-ho-gya-writeup">Public report repository</a> · Code is maintained separately in the private course repository.</p><p>This project models cloth as a grid of point masses joined by structural, shear, and bending springs. The implementation adds damped Verlet integration, a stretch-limiting projection, sphere and plane contact, and spatially binned self-collision. GLSL shaders provide diffuse and Blinn–Phong lighting, a custom textile texture, bump and displacement mapping, and cubemap reflections.</p><div class="wide"><figure><img src="assets/p3_sphere_5000_1800.png" alt="Cloth draped over the sphere, ks = 5000, t = 20 s."><figcaption>Cloth draped over the sphere, ks = 5000, t = 20 s.</figcaption></figure></div><p>The most useful connection in the experiments is that spring response depends on stiffness relative to mass: increasing ks tenfold and reducing density tenfold produce almost identical two-pin drapes. Geometry and appearance also separate cleanly: bump mapping changes lighting while displacement changes the silhouette.</p><p><strong>Reproducibility.</strong> Unless stated otherwise, scenes use a 1 × 1 sheet, 50 × 50 masses, thickness 0.0095, density 150, ks = 5000, damping 0.2%, gravity (0, −9.8, 0), 90 frames/s, and 30 substeps/frame (dt = 1/2700 s). Density values below refer to the scene parameter, not the GUI’s divided display. Vertical initialization uses seed 184. Sphere tessellation is 40 × 40 except in Part 5.</p><p>Images are real OpenGL framebuffer captures from the same C++ simulator and shaders used interactively, rendered on an Apple M1 Pro. Simulation time is independent of wall-clock render time. Background-only margins are cropped for legibility. Parameter-comparison images share a common crop to preserve their relative scale; no geometry, shading, or results were retouched. Configurations and motion measurements are summarized in <a href="assets/experiments.json">experiments.json</a>.</p></section><section class="report-page" id="part1"><p class="eyebrow">CS 184 · HW4 · Cloth simulation</p><h1>Part 1 — Masses and springs</h1><p>The point array is built in row-major order: x advances within a row, then y advances to the next row. A horizontal sheet spans xz at y = 1. A vertical sheet spans xy with a small random z displacement in [−0.001, 0.001] to break exact symmetry. Grid indices listed in the scene’s pinned array mark fixed masses.</p><p>All masses are stored before springs are created, so the spring endpoint pointers remain valid. Structural springs connect immediate horizontal and vertical neighbors; shear springs connect diagonals; bending springs span two masses horizontally or vertically. Each pair is inserted once, and its initial separation becomes its rest length.</p><table class="figures"><tr><td><figure><img src="assets/p1_no_shear.png" alt="Structural + bending; shear disabled; pinned2, t = 0 s."><figcaption>Structural + bending; shear disabled; pinned2, t = 0 s.</figcaption></figure></td><td><figure><img src="assets/p1_shear_only.png" alt="Shearing only; pinned2, t = 0 s."><figcaption>Shearing only; pinned2, t = 0 s.</figcaption></figure></td><td><figure><img src="assets/p1_all.png" alt="All three spring families; pinned2, t = 0 s."><figcaption>All three spring families; pinned2, t = 0 s.</figcaption></figure></td></tr><tr><td><figure><img src="assets/p1_no_shear_detail.png" alt="Horizontal/vertical connections; enlarged crop of the same capture."><figcaption>Horizontal/vertical connections; enlarged crop of the same capture.</figcaption></figure></td><td><figure><img src="assets/p1_shear_only_detail.png" alt="Diagonal connections; enlarged crop of the same capture."><figcaption>Diagonal connections; enlarged crop of the same capture.</figcaption></figure></td><td><figure><img src="assets/p1_all_detail.png" alt="Combined network; enlarged crop of the same capture."><figcaption>Combined network; enlarged crop of the same capture.</figcaption></figure></td></tr></table><p>For the 50 × 50 grid, there are 2500 masses, 4900 structural springs, 4802 shear springs, and 4800 bending springs. The no-shear view has square cells, the shear-only view has intersecting diagonals, and the full view combines them. Bending springs overlap structural directions in this projection but connect points two intervals apart. The lower row enlarges the structure rather than changing the mesh resolution.</p></section><section class="report-page" id="part2-stiffness"><p class="eyebrow">CS 184 · HW4 · Cloth simulation</p><h1>Part 2 — Spring stiffness</h1><p>At each substep, the force accumulator is reset and uniform external accelerations contribute mass × acceleration. Every enabled spring contributes equal and opposite Hooke forces. Bending uses 0.2ks, while structural and shear springs use ks. This preserves internal-force balance and keeps bending softer than stretching.</p><p>The damped Verlet update is:</p><div class="equation">x_next = x + (1 − damping/100)(x − x_previous) + (F/m)dt²</div><p>The previous position is saved before the update. Pinned masses are excluded from integration, collision corrections, and stretch projection.</p><table class="figures"><tr><td><figure><img src="assets/p2_ks_low_90.png" alt="ks = 500; t = 1 s."><figcaption>ks = 500; t = 1 s.</figcaption></figure></td><td><figure><img src="assets/p2_default_90.png" alt="ks = 5000 (default); t = 1 s."><figcaption>ks = 5000 (default); t = 1 s.</figcaption></figure></td><td><figure><img src="assets/p2_ks_high_90.png" alt="ks = 50000; t = 1 s."><figcaption>ks = 50000; t = 1 s.</figcaption></figure></td></tr><tr><td><figure><img src="assets/p2_ks_low_900.png" alt="ks = 500; t = 10 s."><figcaption>ks = 500; t = 10 s.</figcaption></figure></td><td><figure><img src="assets/p2_default_900.png" alt="ks = 5000 (default); t = 10 s."><figcaption>ks = 5000 (default); t = 10 s.</figcaption></figure></td><td><figure><img src="assets/p2_ks_high_900.png" alt="ks = 50000; t = 10 s."><figcaption>ks = 50000; t = 10 s.</figcaption></figure></td></tr></table><p>At 1 s, the low-stiffness cloth hangs farther down and is more visibly deformed; the high-stiffness cloth remains shorter and more supported between the pins. At 10 s, the low-ks cloth retains small folds and motion, while the high-ks result is smoother and less stretched. The stretch projection prevents the soft cloth from stretching without bound, so lowering ks does not make the sheet detach or grow arbitrarily long.</p><table class="data"><thead><tr><th>ks</th><th>Minimum y at 10 s</th><th>RMS frame speed at 10 s</th></tr></thead><tbody><tr><td>500</td><td>-0.1429</td><td>0.01385</td></tr><tr><td>5000</td><td>-0.08292</td><td>1.259e-11</td></tr><tr><td>50000</td><td>-0.02169</td><td>1.132e-11</td></tr></tbody></table></section><section class="report-page" id="part2-density"><p class="eyebrow">CS 184 · HW4 · Cloth simulation</p><h1>Part 2 — Density</h1><p>Here ks stays at 5000 and damping stays at 0.2%. Changing density changes each point’s mass, m = width × height × density / number_of_masses. Gravity alone still gives the same acceleration because F_gravity/m = g. Differences appear when spring forces must support the cloth’s weight: the same spring force accelerates a heavier point less.</p><table class="figures"><tr><td><figure><img src="assets/p2_density_low_90.png" alt="Density = 15; t = 1 s."><figcaption>Density = 15; t = 1 s.</figcaption></figure></td><td><figure><img src="assets/p2_default_90.png" alt="Density = 150 (default); t = 1 s."><figcaption>Density = 150 (default); t = 1 s.</figcaption></figure></td><td><figure><img src="assets/p2_density_high_90.png" alt="Density = 1500; t = 1 s."><figcaption>Density = 1500; t = 1 s.</figcaption></figure></td></tr><tr><td><figure><img src="assets/p2_density_low_900.png" alt="Density = 15; t = 10 s."><figcaption>Density = 15; t = 10 s.</figcaption></figure></td><td><figure><img src="assets/p2_default_900.png" alt="Density = 150 (default); t = 10 s."><figcaption>Density = 150 (default); t = 10 s.</figcaption></figure></td><td><figure><img src="assets/p2_density_high_900.png" alt="Density = 1500; t = 10 s."><figcaption>Density = 1500; t = 10 s.</figcaption></figure></td></tr></table><p>The light cloth is less stretched, with a higher bottom edge and a smoother hanging shape. The heavy cloth sags farther, folds more, and retains more small motion at the same late time. The screenshots at 1 s show the transient differences; the 10 s views show the resulting drapes.</p><table class="data"><thead><tr><th>Density</th><th>Minimum y at 10 s</th><th>Centroid y at 10 s</th></tr></thead><tbody><tr><td>15</td><td>-0.02169</td><td>0.4784</td></tr><tr><td>150</td><td>-0.08292</td><td>0.4295</td></tr><tr><td>1500</td><td>-0.1426</td><td>0.4044</td></tr></tbody></table><p>The density-15 result closely matches ks = 50000 from the previous page. Both raise ks/m by a factor of ten. The density-1500 and ks-500 cases similarly reduce ks/m; small late differences can develop from contact and numerical ordering.</p></section><section class="report-page" id="part2-damping"><p class="eyebrow">CS 184 · HW4 · Cloth simulation</p><h1>Part 2 — Damping</h1><p>Damping scales the velocity estimate carried from the previous position. These runs change only damping, using 0%, the default 0.2%, and 1%. It is applied at every substep, so even a small percentage has a substantial cumulative effect.</p><table class="figures"><tr><td><figure><img src="assets/p2_damping_low_90.png" alt="Damping = 0%; t = 1 s."><figcaption>Damping = 0%; t = 1 s.</figcaption></figure></td><td><figure><img src="assets/p2_default_90.png" alt="Damping = 0.2%; t = 1 s."><figcaption>Damping = 0.2%; t = 1 s.</figcaption></figure></td><td><figure><img src="assets/p2_damping_high_90.png" alt="Damping = 1%; t = 1 s."><figcaption>Damping = 1%; t = 1 s.</figcaption></figure></td></tr><tr><td><figure><img src="assets/p2_damping_low_900.png" alt="Damping = 0%; t = 10 s."><figcaption>Damping = 0%; t = 10 s.</figcaption></figure></td><td><figure><img src="assets/p2_default_900.png" alt="Damping = 0.2%; t = 10 s."><figcaption>Damping = 0.2%; t = 10 s.</figcaption></figure></td><td><figure><img src="assets/p2_damping_high_900.png" alt="Damping = 1%; t = 10 s."><figcaption>Damping = 1%; t = 10 s.</figcaption></figure></td></tr></table><p>Without damping, the cloth swings strongly: at 1 s it has rebounded toward its initial height, and substantial motion remains at 10 s. The default loses this large-scale motion rapidly. At 1%, motion is slowed so much that the cloth is still much closer to its starting position at 1 s; it approaches the hanging configuration gradually. Higher damping reduces oscillation but can delay reaching equilibrium.</p><table class="data"><thead><tr><th>Damping</th><th>RMS speed at 1 s</th><th>RMS speed at 3 s</th><th>RMS speed at 10 s</th></tr></thead><tbody><tr><td>0%</td><td>0.7327</td><td>0.6015</td><td>1.746</td></tr><tr><td>0.2%</td><td>0.4652</td><td>0.002159</td><td>1.259e-11</td></tr><tr><td>1%</td><td>0.2727</td><td>0.132</td><td>0.005472</td></tr></tbody></table><p>The zero-damping run is an intentionally moving comparison, not a resting-state result. The stretch limiter and contact projections can still change energy even when explicit damping is zero.</p></section><section class="report-page" id="part2-pinned4"><p class="eyebrow">CS 184 · HW4 · Cloth simulation</p><h1>Part 2 — Four pinned corners</h1><p>The four-pin scene keeps every corner fixed while the interior sags under gravity. This capture uses all default scene parameters and the completed Blinn–Phong shader. The corners stay at y = 1, while the center region forms a smooth bowl.</p><table class="figures"><tr><td><figure><img src="assets/p2_pinned4_1800.png" alt="pinned4.json, default parameters, t = 20 s."><figcaption>pinned4.json, default parameters, t = 20 s.</figcaption></figure></td><td><figure><img src="assets/damping-speed.png" alt="Measured damping comparison"><figcaption>Three recorded motion samples per damping setting; dashed lines only connect samples.</figcaption></figure></td></tr></table><table class="data"><thead><tr><th>Measured quantity</th><th>Result</th></tr></thead><tbody><tr><td>Minimum y at 20 s</td><td>0.7356</td></tr><tr><td>Centroid y at 20 s</td><td>0.8174</td></tr><tr><td>RMS frame speed at 20 s</td><td>1.658e-12</td></tr><tr><td>Maximum pinned-position error</td><td>0</td></tr></tbody></table><p>The 10 s and 20 s measurements agree to the displayed precision, and residual motion is at numerical precision. This supplies the required shaded resting-state screenshot, rather than relying on a transient image.</p><p>After motion and contact, each enabled spring receives a Provot-style stretch correction if it exceeds 1.1 times rest length. Unpinned endpoints split the correction; if one endpoint is pinned, the other receives it all. Both pinned endpoints stay fixed. This is a sequential projection: correcting later springs can slightly disturb earlier constraints, so it is a practical stretch limiter rather than a globally converged constraint solve.</p></section><section class="report-page" id="part3-sphere"><p class="eyebrow">CS 184 · HW4 · Cloth simulation</p><h1>Part 3 — Sphere collisions</h1><p>For an unpinned point inside the sphere, the direction from the sphere center to the point defines a radial surface target. The correction runs from the previous position to that target; friction scales the correction by (1 − f). The position is then the previous position plus the scaled correction. A point exactly at the center uses its previous radial direction, or an upward fallback, to avoid dividing by zero.</p><table class="figures"><tr><td><figure><img src="assets/p3_sphere_500_1800.png" alt="sphere.json, ks = 500, t = 20 s."><figcaption>sphere.json, ks = 500, t = 20 s.</figcaption></figure></td><td><figure><img src="assets/p3_sphere_5000_1800.png" alt="sphere.json, ks = 5000, t = 20 s."><figcaption>sphere.json, ks = 5000, t = 20 s.</figcaption></figure></td><td><figure><img src="assets/p3_sphere_50000_1800.png" alt="sphere.json, ks = 50000, t = 20 s."><figcaption>sphere.json, ks = 50000, t = 20 s.</figcaption></figure></td></tr></table><p>The low-ks cloth wraps tightly around the sphere and has narrow, long hanging folds. At the default stiffness, the folds are wider and the sheet extends farther sideways. At high stiffness, the cloth resists deformation, spreads out more, and forms a broad, tent-like drape with fewer large folds. The visible top remains supported at roughly the same sphere height in all three cases.</p><table class="data"><thead><tr><th>ks</th><th>Lowest cloth y</th><th>Centroid y</th><th>RMS frame speed</th></tr></thead><tbody><tr><td>500</td><td>-0.2751</td><td>0.07947</td><td>0.001754</td></tr><tr><td>5000</td><td>-0.2335</td><td>0.09876</td><td>0.0002189</td></tr><tr><td>50000</td><td>-0.2</td><td>0.1336</td><td>4.143e-05</td></tr></tbody></table><p>These are late, near-rest states. The remaining RMS frame speeds are small, but are reported rather than rounded to an assertion of exact zero. The starter draws a slightly smaller sphere than its collision radius so flat rendered triangles do not visibly cut through the supporting surface.</p></section><section class="report-page" id="part3-plane"><p class="eyebrow">CS 184 · HW4 · Cloth simulation</p><h1>Part 3 — Plane collisions</h1><p>A plane contact occurs when the signed distances of the previous and current positions lie on opposite sides of the plane. The current point is projected onto the plane, then offset by 0.0001 toward the side it came from. As with the sphere, friction scales the correction from the previous position. Handling both crossing directions keeps a two-sided plane from incorrectly pushing everything onto only its positive side.</p><div class="wide"><figure><img src="assets/p3_plane_900.png" alt="plane.json at t = 10 s; original blue-and-gold weave texture."><figcaption>plane.json at t = 10 s; original blue-and-gold weave texture.</figcaption></figure></div><p>The sheet lies flat above the plane with the custom texture clearly showing its intact rectangular shape. All vertices have the same height at this captured instant: 0.0004426. The contact rule retains tiny vertical jitter; its frame-based RMS speed is 0.0339 scene units/s. The image is a visually resting contact state, not a claim of mathematically zero velocity.</p><p>Collision checks run for every unpinned point against every scene primitive. Contact is position based; there are no ray-traced shadows, continuous swept intersections, or rigid-body dynamics in this model. These are the prescribed simple sphere/plane collision rules.</p></section><section class="report-page" id="part4-sequence"><p class="eyebrow">CS 184 · HW4 · Cloth simulation</p><h1>Part 4 — Falling and folding</h1><p>Self-collision groups masses into spatial boxes with widths 3 × cloth_width / num_width_points and 3 × cloth_height / num_height_points; the third dimension uses the larger of those values. Flooring signed coordinates gives the box index, including for negative positions. Integer box triples are assigned small unique float IDs, avoiding aliases from a weighted coordinate sum.</p><p>The spatial map is rebuilt each substep. For each unpinned mass, only other masses in its bucket are considered. Pairs closer than twice the thickness contribute a separation correction. Corrections are averaged over contacting neighbors, then divided by the number of simulation substeps. A mass never collides with itself; coincident masses use a deterministic separation direction.</p><table class="figures"><tr><td><figure><img src="assets/p4_default_45.png" alt="t = 0.5 s: lower cloth first bunches and folds at contact."><figcaption>t = 0.5 s: lower cloth first bunches and folds at contact.</figcaption></figure></td><td><figure><img src="assets/p4_default_90.png" alt="t = 1 s: the upper sheet collapses onto the folded lower layers."><figcaption>t = 1 s: the upper sheet collapses onto the folded lower layers.</figcaption></figure></td></tr><tr><td><figure><img src="assets/p4_default_270.png" alt="t = 3 s: multiple overlapping folds spread across the plane."><figcaption>t = 3 s: multiple overlapping folds spread across the plane.</figcaption></figure></td><td><figure><img src="assets/p4_default_900.png" alt="t = 10 s: flatter, more restful layers; small motion remains."><figcaption>t = 10 s: flatter, more restful layers; small motion remains.</figcaption></figure></td></tr></table><p>All four frames use the default selfCollision.json parameters. Normal coloring makes fold orientation visible on both sides: the ground has a constant normal color, while the cloth changes color with its bends. The sheet forms layered folds instead of simply passing through itself. RMS frame speed decreases from 1.026 at 0.5 s to 0.02941 at 10 s. Continued spreading is expected from this simplified repulsion model.</p></section><section class="report-page" id="part4-parameters"><p class="eyebrow">CS 184 · HW4 · Cloth simulation</p><h1>Part 4 — Density and stiffness</h1><p>The top row varies density at fixed ks = 5000; the bottom varies ks at fixed density = 150. Damping remains 0.2%, the vertical perturbation uses the same seed, and all views are taken at 1 s. This holds observation time and camera fixed rather than comparing unrelated stages of the fall.</p><table class="figures"><tr><td><figure><img src="assets/p4_density_low_90.png" alt="Density 15; ks 5000."><figcaption>Density 15; ks 5000.</figcaption></figure></td><td><figure><img src="assets/p4_default_90.png" alt="Density 150; ks 5000 (default)."><figcaption>Density 150; ks 5000 (default).</figcaption></figure></td><td><figure><img src="assets/p4_density_high_90.png" alt="Density 1500; ks 5000."><figcaption>Density 1500; ks 5000.</figcaption></figure></td></tr><tr><td><figure><img src="assets/p4_ks_low_90.png" alt="ks 500; density 150."><figcaption>ks 500; density 150.</figcaption></figure></td><td><figure><img src="assets/p4_default_90.png" alt="ks 5000; density 150 (default)."><figcaption>ks 5000; density 150 (default).</figcaption></figure></td><td><figure><img src="assets/p4_ks_high_90.png" alt="ks 50000; density 150."><figcaption>ks 50000; density 150.</figcaption></figure></td></tr></table><p>At low density or high ks, the sheet resists compression more strongly relative to its weight and tends toward wider, more coherent folds. At high density or low ks, the initial collapse is softer and more crumpled. Local contact and fold topology make these comparisons less symmetric than the suspended-cloth case: small changes in which masses meet can change the later pattern.</p><table class="data"><thead><tr><th>Variation</th><th>RMS speed at 1 s</th><th>RMS speed at 10 s</th><th>Maximum y at 10 s</th></tr></thead><tbody><tr><td>Density 15</td><td>0.2677</td><td>0.02667</td><td>0.06054</td></tr><tr><td>Default</td><td>0.3112</td><td>0.02941</td><td>0.03944</td></tr><tr><td>Density 1500</td><td>0.3372</td><td>0.09089</td><td>0.0556</td></tr><tr><td>ks 500</td><td>0.3756</td><td>0.09135</td><td>0.05662</td></tr><tr><td>ks 50000</td><td>0.2814</td><td>0.03594</td><td>0.05946</td></tr></tbody></table><p>The softer/heavier settings keep more residual motion at 10 s in these runs. The table reports this particular experiment; it does not imply every fold height or speed must vary monotonically. Spatial buckets reduce candidate work substantially, but this same-cell, point-sample method does not guarantee continuous triangle-level nonintersection across bucket boundaries.</p></section><section class="report-page" id="part5-phong"><p class="eyebrow">CS 184 · HW4 · Cloth simulation</p><h1>Part 5 — Shaders and Blinn–Phong</h1><p>A shader program pairs small GPU programs operating at different stages. The vertex shader transforms positions and passes normals, tangents, and UV coordinates onward. Rasterization interpolates those values across triangles. The fragment shader uses the interpolated values, lights, and textures to assign each fragment’s color. A fragment shader can change appearance without changing the underlying mesh.</p><p>Blinn–Phong adds three terms: ambient light supplies a small uniform base; diffuse light scales with the cosine between normal and light direction; specular light produces a highlight when the normal aligns with the halfway direction between the light and viewer. The point-light diffuse and specular terms decrease with squared distance. Here ka = 0.1, Ia = 1, kd = 1, ks_specular = 0.4, and shininess p = 32. This ks_specular is unrelated to spring stiffness.</p><table class="figures"><tr><td><figure><img src="assets/p5_phong_ambient.png" alt="Ambient only: constant base color."><figcaption>Ambient only: constant base color.</figcaption></figure></td><td><figure><img src="assets/p5_phong_diffuse.png" alt="Diffuse only: shape-dependent illumination."><figcaption>Diffuse only: shape-dependent illumination.</figcaption></figure></td></tr><tr><td><figure><img src="assets/p5_phong_specular.png" alt="Specular only: view-dependent highlights."><figcaption>Specular only: view-dependent highlights.</figcaption></figure></td><td><figure><img src="assets/p5_phong_full.png" alt="Full Blinn–Phong: sum of the three components."><figcaption>Full Blinn–Phong: sum of the three components.</figcaption></figure></td></tr></table><p>All four use the identical four-pin cloth state at t = 10 s, camera, and light. Only the component weights change. The ambient view has no directional shape cues, the diffuse view reveals the bowl, and the specular view isolates highlights along normals aligned with the half-vector.</p></section><section class="report-page" id="part5-texture-bump"><p class="eyebrow">CS 184 · HW4 · Cloth simulation</p><h1>Part 5 — Texture and bump mapping</h1><p>The texture shader samples a 2D image at the cloth’s interpolated UV coordinates. The custom blue-and-gold weave was generated for this assignment: alternating diagonal bands establish the design, and a fine periodic modulation creates thread-like highlights. It replaces texture_1.png and is sampled directly, so its pattern follows the cloth’s deformation.</p><table class="figures"><tr><td><figure><img src="assets/p5_texture_cloth.png" alt="Custom weave mapped onto the four-pin cloth."><figcaption>Custom weave mapped onto the four-pin cloth.</figcaption></figure></td><td><figure><img src="assets/p5_bump_cloth.png" alt="Bump mapping on the same cloth; kh = 0.02, kn = 100."><figcaption>Bump mapping on the same cloth; kh = 0.02, kn = 100.</figcaption></figure></td></tr></table><table class="figures"><tr><td><figure><img src="assets/custom-weave.png" alt="Original custom color texture."><figcaption>Original custom color texture.</figcaption></figure></td><td><figure><img src="assets/height-ripples.png" alt="Original height_ripples.png: shared bump/displacement height field."><figcaption>Original height_ripples.png: shared bump/displacement height field.</figcaption></figure></td></tr></table><p>Bump mapping estimates height changes using a one-texel step in u and v. These differences, scaled by kh and kn, produce the local normal (−dU, −dV, 1). The tangent, bitangent, and original normal form a TBN frame that transforms this local normal into the lighting frame. The interpolated tangent is orthogonalized before use, and the resulting normal is normalized.</p><p>The cloth acquires alternating illuminated ridges while keeping its silhouette and original triangle positions. The height map is an original periodic sinusoidal surface, not the starter’s default texture_2.png. Both bump and displacement shaders sample this exact same height_ripples.png, loaded into the height-map texture slot.</p></section><section class="report-page" id="part5-displacement"><p class="eyebrow">CS 184 · HW4 · Cloth simulation</p><h1>Part 5 — Bump vs. displacement</h1><p>Displacement mapping adds normal × sampled_height × kh to each object-space vertex before model and view-projection transforms. It then uses the same bump-based normal perturbation in its fragment shader. Bump mapping leaves the mesh positions unchanged; displacement therefore changes both shading and silhouette.</p><table class="figures"><tr><td><figure><img src="assets/p5_bump_sphere_16.png" alt="Bump mapping; sphere 16 × 16, kh = 0.15, kn = 30."><figcaption>Bump mapping; sphere 16 × 16, kh = 0.15, kn = 30.</figcaption></figure></td><td><figure><img src="assets/p5_displacement_sphere_16.png" alt="Displacement mapping; sphere 16 × 16, kh = 0.15, kn = 30."><figcaption>Displacement mapping; sphere 16 × 16, kh = 0.15, kn = 30.</figcaption></figure></td></tr><tr><td><figure><img src="assets/p5_bump_sphere_128.png" alt="Bump mapping; sphere 128 × 128, kh = 0.15, kn = 30."><figcaption>Bump mapping; sphere 128 × 128, kh = 0.15, kn = 30.</figcaption></figure></td><td><figure><img src="assets/p5_displacement_sphere_128.png" alt="Displacement mapping; sphere 128 × 128, kh = 0.15, kn = 30."><figcaption>Displacement mapping; sphere 128 × 128, kh = 0.15, kn = 30.</figcaption></figure></td></tr></table><p>These sphere-only render comparisons use the sphere from sphere.json, the same camera, the same nondefault height field, and the requested −o 16 −a 16 and −o 128 −a 128 resolutions. Hiding the cloth exposes the sphere surface rather than allowing the drape to obscure the comparison.</p><p>At 16 × 16, the bumped sphere retains its coarse, polygonal outline even though the fragment lighting suggests ridges. Displacement visibly reshapes that coarse outline, but the peaks are angular and the sampled pattern is uneven. At 128 × 128, bump shading looks smoother but still cannot alter the outline. The displaced sphere has much smoother geometric ripples and a clearly scalloped silhouette. More triangles help displacement represent the height field; extra fragments alone cannot create new silhouette geometry.</p></section><section class="report-page" id="part5-mirror"><p class="eyebrow">CS 184 · HW4 · Cloth simulation</p><h1>Part 5 — Environment reflections</h1><table class="figures"><tr><td><figure><img src="assets/p5_mirror_cloth.png" alt="Mirror shader on the four-pin cloth, t = 10 s."><figcaption>Mirror shader on the four-pin cloth, t = 10 s.</figcaption></figure></td><td><figure><img src="assets/p5_mirror_sphere_128.png" alt="Mirror shader on the sphere, 128 × 128 tessellation."><figcaption>Mirror shader on the sphere, 128 × 128 tessellation.</figcaption></figure></td></tr></table><p>For each fragment, the camera-to-surface direction is reflected around the normalized surface normal. That reflected direction selects incoming color from the cubemap. The bridge structure and sky therefore bend across the cloth’s changing normals, while the sphere produces a compact curved reflection of the same environment.</p><p>The cubemap supplies the background radiance; this is not a new ray-traced scene. It does not trace visibility, cast shadows, or reflect the cloth and sphere into each other. Those limitations explain why the effect can run in a simple rasterization shader.</p><p><strong>What was implemented.</strong> All required shader types are present: diffuse, full Blinn–Phong with isolated diagnostic components, custom texture mapping, bump mapping, displacement mapping, and environment-mapped reflection. The provided Custom shader remains unused; no optional extra credit is claimed.</p><p><strong>Verification.</strong> Shader checks ran on the GPU, rather than checking only source text: 13 analytic checks cover diffuse clamping, isolated and summed Blinn–Phong components, flat and varying height maps, texture/cubemap sampling, and transform-feedback measurement of actual vertex displacement. All passed with OpenGL error state zero. Every report image was rendered with the production shader files.</p></section><section class="report-page" id="acknowledgment"><p class="eyebrow">CS 184 · HW4 · Cloth simulation</p><h1>Verification, lessons, and acknowledgment</h1><p>The numerical suite passes 234 checks covering grid order, mass/spring counts, pointer stability, pinning, vertical perturbation bounds, triangle count, analytic Verlet steps, force reset, damping percentages, substep size, Hooke-force symmetry, spring toggles, bending strength, isolated stretch projection, plane crossing from either side, friction endpoints, sphere-center handling, signed spatial bins, self-pair exclusion, and finite separation of coincident masses. The shader suite passes 13 GPU checks. These are local checks, not an official course autograder result.</p><p>The initial regression runs failed on missing starter behavior before implementation. A later boundary regression caught a plane point incorrectly colliding while departing from the surface; the crossing condition was corrected and the affected contact experiments were rerun. A practical challenge was creating reproducible evidence without desktop automation: a hidden OpenGL context captures the same renderer after exact numbers of physics substeps. The capture path also rejects nonfinite positions and records pinned errors and frame-based motion. Per-image configurations and measurements were kept alongside the unedited captures.</p><p>The experiments make three distinctions useful: mass cancels out of free-fall acceleration but changes spring response; stronger damping can suppress oscillations while slowing the approach to equilibrium; and shading detail is not geometric detail. The numerical constraints and spatial collision approximation also show why a plausible, stable cloth model can still differ from a fully physical material.</p><p><strong>Limits.</strong> Self-collision uses sampled masses in the same bucket, not continuous face/edge collision. Sequential stretch projection does not globally solve all constraints at once. The plane can show tiny contact jitter, and the self-collision pile can keep spreading. These limitations are visible or measured and are not hidden by claims of perfect convergence. The report selects stable or near-rest views where required and labels transient comparisons explicitly.</p><p><strong>Sources.</strong> Implementation requirements, experiment settings requested by staff, and the rubric were read from the current Fall 2026 handout. No other student solutions or public solution repositories were used.</p><ul><li><a href="https://cs184.eecs.berkeley.edu/fa26/hw/hw4/">Official HW4 handout</a>, including Parts 1–5.</li><li><a href="https://cs184.eecs.berkeley.edu/fa26/hw/hw4/deliverables/">Deliverables and write-up rubric</a>.</li><li><a href="https://cs184.eecs.berkeley.edu/fa26/resources/student-handbook/">Student Handbook: code and PDF submissions</a>.</li><li><a href="https://cs184.eecs.berkeley.edu/fa26/policies/#policy-on-use-of-generative-ai-tools">Current generative-AI policy</a>.</li><li><a href="https://edstem.org/us/courses/102842/discussion/8488039">HW4 staff release thread</a> and associated part/submission threads; reviewed November 24, 2026.</li></ul><p><strong>Acknowledgment of AI assistance.</strong> This work used substantial OpenAI Codex assistance for conceptual explanations; generation of the C++ simulation/collision implementation and GLSL shaders; regression tests and the capture workflow; execution and analysis of experiments; creation of the custom procedural textures; and drafting and formatting this report. The screenshots and measurements come from actual simulator and GPU runs. The AI-assisted prose is not represented as independently written student prose. Final review and Gradescope uploads remain with Rakesh.</p></section></body></html>
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<title>CS 184 HW4 | Cloth Simulation</title>
+		<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+		<style>
+			h1 {
+				text-align: center;
+			}
+
+			.container {
+				margin: 0 auto;
+				padding: 60px 20%;
+			}
+
+			figure {
+				text-align: center;
+			}
+
+			img {
+				display: inline-block;
+			}
+
+			body {
+				font-family: 'Inter', sans-serif;
+			}
+
+			.equation { text-align: center; }
+
+			@page {
+				size: letter;
+				margin: 0.55in 0.62in 0.6in;
+				@bottom-right { content: counter(page); font-size: 9pt; }
+			}
+
+			@media print {
+				body { font-family: Arial, sans-serif; font-size: 10pt; line-height: 1.36; }
+				.container { padding: 0; }
+				h1 { font-size: 20pt; margin: 0 0 12pt; }
+				h2 { font-size: 17pt; margin: 0 0 8pt; }
+				h3 { font-size: 14pt; margin: 0 0 8pt; }
+				h2, h3 { break-after: avoid; break-before: page; }
+				h2:first-of-type, h2 + h3, h2:last-of-type { break-before: auto; }
+				p { margin: 7pt 0; orphans: 2; widows: 2; }
+				div[style*="flex-direction"] { display: block !important; }
+				figure { margin: 8pt 0; break-inside: avoid; }
+				img { max-height: 1.8in; object-fit: contain; }
+				figure img { max-height: 2.35in; }
+				figcaption { font-size: 8pt !important; margin: 4pt 0 5pt !important; }
+				tr { break-inside: avoid; }
+				td, th { padding: 3pt 5pt !important; }
+				a { color: #154f83; overflow-wrap: anywhere; }
+			}
+		</style>
+	</head>
+	<body>
+		<div class="container">
+		<h1>CS184/284A Fall 2026 Homework 4 Write-Up</h1>
+		<div style="text-align: center;">Names: Rakesh Mehta</div>
+
+		<br>
+
+		Link to webpage: <a href="https://cal-cs184-student.github.io/hw4-kya-crazy-ho-gya-writeup/">https://cal-cs184-student.github.io/hw4-kya-crazy-ho-gya-writeup/</a>
+
+		<br>
+
+		Link to GitHub repository: <a href="https://github.com/cal-cs184-student/hw4-kya-crazy-ho-gya">github.com/cal-cs184-student/hw4-kya-crazy-ho-gya</a>
+
+		<figure>
+			<img src="assets/p3_sphere_5000_1800.png" alt="Cloth draped over the sphere, ks = 5000, t = 20 s." style="width:70%"/>
+			<figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Cloth draped over the sphere, ks = 5000, t = 20 s.</figcaption>
+		</figure>
+
+		<h2>Overview</h2>
+		<p>This project models cloth as a grid of point masses joined by structural, shear, and bending springs. The implementation adds damped Verlet integration, a stretch-limiting projection, sphere and plane contact, and spatially binned self-collision. GLSL shaders provide diffuse and Blinn–Phong lighting, a custom textile texture, bump and displacement mapping, and cubemap reflections.</p>
+
+		<p>The most useful connection in the experiments is that spring response depends on stiffness relative to mass: increasing ks tenfold and reducing density tenfold produce almost identical two-pin drapes. Geometry and appearance also separate cleanly: bump mapping changes lighting while displacement changes the silhouette.</p>
+
+		<p>The experiments make three distinctions useful: mass cancels out of free-fall acceleration but changes spring response; stronger damping can suppress oscillations while slowing the approach to equilibrium; and shading detail is not geometric detail. The numerical constraints and spatial collision approximation also show why a plausible, stable cloth model can still differ from a fully physical material.</p>
+
+		<p>One bug came up in plane collisions. A point lying exactly on the plane (signed distance 0) and moving away from it still passed the crossing test, so it was treated as crossing from below and snapped back onto the surface. Counting a point on the plane as being on the positive side fixed this, so only true sign changes register as collisions, and the affected collision experiments were rerun.</p>
+
+		<p><strong>Limits.</strong> Self-collision uses sampled masses in the same bucket, not continuous face/edge collision. Sequential stretch projection does not globally solve all constraints at once. The plane can show tiny contact jitter, and the self-collision pile can keep spreading. These limitations are visible or measured and are not hidden by claims of perfect convergence. The report selects stable or near-rest views where required and labels transient comparisons explicitly.</p>
+
+		<p><strong>Reproducibility.</strong> Unless stated otherwise, scenes use a 1 × 1 sheet, 50 × 50 masses, thickness 0.0095, density 150, ks = 5000, damping 0.2%, gravity (0, −9.8, 0), 90 frames/s, and 30 substeps/frame (dt = 1/2700 s). Density values below refer to the scene parameter, not the GUI’s divided display. Vertical initialization uses seed 184. Sphere tessellation is 40 × 40 except in Part 5.</p>
+
+		<h2>Part 1: Masses and springs</h2>
+		<p>The point array is built in row-major order: x advances within a row, then y advances to the next row. A horizontal sheet spans xz at y = 1. A vertical sheet spans xy with a small random z displacement in [−0.001, 0.001] to break exact symmetry. Grid indices listed in the scene’s pinned array mark fixed masses.</p>
+
+		<p>The springs are created only after every point mass has been added to the array. Space for all the masses is reserved in advance, so the array never reallocates and the pointers each spring keeps to its two masses stay valid. There are three kinds of springs. Structural springs connect each mass to its immediate left and upper neighbors. Shear springs connect it to its two upper diagonal neighbors. Bending springs connect it to the masses two positions to the left and two positions above. Because each mass only links back to masses that already exist, every pair is connected exactly once. Each spring's rest length is the distance between its two masses when the cloth is first built.</p>
+
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse; table-layout: fixed;">
+			  <tr>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p1_no_shear.png" alt="Structural + bending; shear disabled; pinned2, t = 0 s." style="width: 100%; aspect-ratio: 1.203; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Structural + bending; shear disabled; pinned2, t = 0 s.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p1_shear_only.png" alt="Shearing only; pinned2, t = 0 s." style="width: 100%; aspect-ratio: 1.203; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Shearing only; pinned2, t = 0 s.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p1_all.png" alt="All three spring families; pinned2, t = 0 s." style="width: 100%; aspect-ratio: 1.203; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">All three spring families; pinned2, t = 0 s.</figcaption>
+				</td>
+			  </tr>
+			  <tr>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p1_no_shear_detail.png" alt="Horizontal/vertical connections; enlarged crop of the same capture." style="width: 100%; aspect-ratio: 1.333; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Horizontal/vertical connections; enlarged crop of the same capture.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p1_shear_only_detail.png" alt="Diagonal connections; enlarged crop of the same capture." style="width: 100%; aspect-ratio: 1.333; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Diagonal connections; enlarged crop of the same capture.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p1_all_detail.png" alt="Combined network; enlarged crop of the same capture." style="width: 100%; aspect-ratio: 1.333; object-fit: contain; background: #ffffff; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Combined network; enlarged crop of the same capture.</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+
+		<p>For the 50 × 50 grid, there are 2500 masses, 4900 structural springs, 4802 shear springs, and 4800 bending springs. The no-shear view has square cells, the shear-only view has intersecting diagonals, and the full view combines them. Bending springs overlap structural directions in this projection but connect points two intervals apart. The lower row enlarges the structure rather than changing the mesh resolution.</p>
+
+
+		<h2>Part 2: Simulation via numerical integration</h2>
+		<h3>Spring stiffness</h3>
+		<p>At each substep, the force accumulator is reset and uniform external accelerations contribute mass × acceleration. Every enabled spring contributes equal and opposite Hooke forces. Bending uses 0.2ks, while structural and shear springs use ks. This preserves internal-force balance and keeps bending softer than stretching.</p>
+
+		<p>The damped Verlet update is:</p>
+
+		<p class="equation">x<sub>next</sub> = x + (1 − damping/100)(x − x<sub>previous</sub>) + (F/m) dt<sup>2</sup></p>
+
+		<p>The previous position is saved before the update. Pinned masses are excluded from integration, collision corrections, and stretch projection.</p>
+
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse; table-layout: fixed;">
+			  <tr>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p2_ks_low_90.png" alt="ks = 500; t = 1 s." style="width: 100%; aspect-ratio: 1.160; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">ks = 500; t = 1 s.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p2_default_90.png" alt="ks = 5000 (default); t = 1 s." style="width: 100%; aspect-ratio: 1.160; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">ks = 5000 (default); t = 1 s.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p2_ks_high_90.png" alt="ks = 50000; t = 1 s." style="width: 100%; aspect-ratio: 1.160; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">ks = 50000; t = 1 s.</figcaption>
+				</td>
+			  </tr>
+			  <tr>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p2_ks_low_900.png" alt="ks = 500; t = 10 s." style="width: 100%; aspect-ratio: 1.160; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">ks = 500; t = 10 s.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p2_default_900.png" alt="ks = 5000 (default); t = 10 s." style="width: 100%; aspect-ratio: 1.160; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">ks = 5000 (default); t = 10 s.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p2_ks_high_900.png" alt="ks = 50000; t = 10 s." style="width: 100%; aspect-ratio: 1.160; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">ks = 50000; t = 10 s.</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+
+		<p>At 1 s, the low-stiffness cloth hangs farther down and is more visibly deformed; the high-stiffness cloth remains shorter and more supported between the pins. At 10 s, the low-ks cloth retains small folds and motion, while the high-ks result is smoother and less stretched. The stretch projection prevents the soft cloth from stretching without bound, so lowering ks does not make the sheet detach or grow arbitrarily long.</p>
+
+		<table style="margin: 12px auto; border-collapse: collapse;"><thead><tr><th style="border: 1px solid #999; padding: 4px 10px;">ks</th><th style="border: 1px solid #999; padding: 4px 10px;">Minimum y at 10 s</th><th style="border: 1px solid #999; padding: 4px 10px;">RMS frame speed at 10 s</th></tr></thead><tbody><tr><td style="border: 1px solid #999; padding: 4px 10px;">500</td><td style="border: 1px solid #999; padding: 4px 10px;">-0.1429</td><td style="border: 1px solid #999; padding: 4px 10px;">0.01385</td></tr><tr><td style="border: 1px solid #999; padding: 4px 10px;">5000</td><td style="border: 1px solid #999; padding: 4px 10px;">-0.08292</td><td style="border: 1px solid #999; padding: 4px 10px;">1.259e-11</td></tr><tr><td style="border: 1px solid #999; padding: 4px 10px;">50000</td><td style="border: 1px solid #999; padding: 4px 10px;">-0.02169</td><td style="border: 1px solid #999; padding: 4px 10px;">1.132e-11</td></tr></tbody></table>
+
+		<h3>Density</h3>
+		<p>Here ks stays at 5000 and damping stays at 0.2%. Changing density changes each point’s mass, m = width × height × density / number_of_masses. Gravity alone still gives the same acceleration because F_gravity/m = g. Differences appear when spring forces must support the cloth’s weight: the same spring force accelerates a heavier point less.</p>
+
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse; table-layout: fixed;">
+			  <tr>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p2_density_low_90.png" alt="Density = 15; t = 1 s." style="width: 100%; aspect-ratio: 1.160; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Density = 15; t = 1 s.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p2_default_90.png" alt="Density = 150 (default); t = 1 s." style="width: 100%; aspect-ratio: 1.160; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Density = 150 (default); t = 1 s.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p2_density_high_90.png" alt="Density = 1500; t = 1 s." style="width: 100%; aspect-ratio: 1.160; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Density = 1500; t = 1 s.</figcaption>
+				</td>
+			  </tr>
+			  <tr>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p2_density_low_900.png" alt="Density = 15; t = 10 s." style="width: 100%; aspect-ratio: 1.160; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Density = 15; t = 10 s.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p2_default_900.png" alt="Density = 150 (default); t = 10 s." style="width: 100%; aspect-ratio: 1.160; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Density = 150 (default); t = 10 s.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p2_density_high_900.png" alt="Density = 1500; t = 10 s." style="width: 100%; aspect-ratio: 1.160; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Density = 1500; t = 10 s.</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+
+		<p>The light cloth is less stretched, with a higher bottom edge and a smoother hanging shape. The heavy cloth sags farther, folds more, and retains more small motion at the same late time. The screenshots at 1 s show the transient differences; the 10 s views show the resulting drapes.</p>
+
+		<table style="margin: 12px auto; border-collapse: collapse;"><thead><tr><th style="border: 1px solid #999; padding: 4px 10px;">Density</th><th style="border: 1px solid #999; padding: 4px 10px;">Minimum y at 10 s</th><th style="border: 1px solid #999; padding: 4px 10px;">Centroid y at 10 s</th></tr></thead><tbody><tr><td style="border: 1px solid #999; padding: 4px 10px;">15</td><td style="border: 1px solid #999; padding: 4px 10px;">-0.02169</td><td style="border: 1px solid #999; padding: 4px 10px;">0.4784</td></tr><tr><td style="border: 1px solid #999; padding: 4px 10px;">150</td><td style="border: 1px solid #999; padding: 4px 10px;">-0.08292</td><td style="border: 1px solid #999; padding: 4px 10px;">0.4295</td></tr><tr><td style="border: 1px solid #999; padding: 4px 10px;">1500</td><td style="border: 1px solid #999; padding: 4px 10px;">-0.1426</td><td style="border: 1px solid #999; padding: 4px 10px;">0.4044</td></tr></tbody></table>
+
+		<p>The density-15 result closely matches ks = 50000 in the Spring stiffness section above. Both raise ks/m by a factor of ten. The density-1500 and ks-500 cases similarly reduce ks/m; small late differences can develop from contact and numerical ordering.</p>
+
+		<h3>Damping</h3>
+		<p>Damping scales the velocity estimate carried from the previous position. These runs change only damping, using 0%, the default 0.2%, and 1%. It is applied at every substep, so even a small percentage has a substantial cumulative effect.</p>
+
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse; table-layout: fixed;">
+			  <tr>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p2_damping_low_90.png" alt="Damping = 0%; t = 1 s." style="width: 100%; aspect-ratio: 1.160; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Damping = 0%; t = 1 s.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p2_default_90.png" alt="Damping = 0.2%; t = 1 s." style="width: 100%; aspect-ratio: 1.160; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Damping = 0.2%; t = 1 s.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p2_damping_high_90.png" alt="Damping = 1%; t = 1 s." style="width: 100%; aspect-ratio: 1.160; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Damping = 1%; t = 1 s.</figcaption>
+				</td>
+			  </tr>
+			  <tr>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p2_damping_low_900.png" alt="Damping = 0%; t = 10 s." style="width: 100%; aspect-ratio: 1.160; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Damping = 0%; t = 10 s.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p2_default_900.png" alt="Damping = 0.2%; t = 10 s." style="width: 100%; aspect-ratio: 1.160; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Damping = 0.2%; t = 10 s.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p2_damping_high_900.png" alt="Damping = 1%; t = 10 s." style="width: 100%; aspect-ratio: 1.160; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Damping = 1%; t = 10 s.</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+
+		<p>Without damping, the cloth swings strongly: at 1 s it has rebounded toward its initial height, and substantial motion remains at 10 s. The default loses this large-scale motion rapidly. At 1%, motion is slowed so much that the cloth is still much closer to its starting position at 1 s; it approaches the hanging configuration gradually. Higher damping reduces oscillation but can delay reaching equilibrium.</p>
+
+		<table style="margin: 12px auto; border-collapse: collapse;"><thead><tr><th style="border: 1px solid #999; padding: 4px 10px;">Damping</th><th style="border: 1px solid #999; padding: 4px 10px;">RMS speed at 1 s</th><th style="border: 1px solid #999; padding: 4px 10px;">RMS speed at 3 s</th><th style="border: 1px solid #999; padding: 4px 10px;">RMS speed at 10 s</th></tr></thead><tbody><tr><td style="border: 1px solid #999; padding: 4px 10px;">0%</td><td style="border: 1px solid #999; padding: 4px 10px;">0.7327</td><td style="border: 1px solid #999; padding: 4px 10px;">0.6015</td><td style="border: 1px solid #999; padding: 4px 10px;">1.746</td></tr><tr><td style="border: 1px solid #999; padding: 4px 10px;">0.2%</td><td style="border: 1px solid #999; padding: 4px 10px;">0.4652</td><td style="border: 1px solid #999; padding: 4px 10px;">0.002159</td><td style="border: 1px solid #999; padding: 4px 10px;">1.259e-11</td></tr><tr><td style="border: 1px solid #999; padding: 4px 10px;">1%</td><td style="border: 1px solid #999; padding: 4px 10px;">0.2727</td><td style="border: 1px solid #999; padding: 4px 10px;">0.132</td><td style="border: 1px solid #999; padding: 4px 10px;">0.005472</td></tr></tbody></table>
+
+		<p>The zero-damping run is an intentionally moving comparison, not a resting-state result. The stretch limiter and contact projections can still change energy even when explicit damping is zero.</p>
+
+		<h3>Four pinned corners</h3>
+		<p>The four-pin scene keeps every corner fixed while the interior sags under gravity. This capture uses all default scene parameters and the completed Blinn–Phong shader. The corners stay at y = 1, while the center region forms a smooth bowl.</p>
+
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse; table-layout: fixed;">
+			  <tr>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p2_pinned4_1800.png" alt="pinned4.json, default parameters, t = 20 s." style="width: 100%; aspect-ratio: 1.568; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">pinned4.json, default parameters, t = 20 s.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/damping-speed.png" alt="Measured damping comparison" style="width: 100%; aspect-ratio: 1.568; object-fit: contain; background: #ffffff; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Three recorded motion samples per damping setting; dashed lines only connect samples.</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+
+		<table style="margin: 12px auto; border-collapse: collapse;"><thead><tr><th style="border: 1px solid #999; padding: 4px 10px;">Measured quantity</th><th style="border: 1px solid #999; padding: 4px 10px;">Result</th></tr></thead><tbody><tr><td style="border: 1px solid #999; padding: 4px 10px;">Minimum y at 20 s</td><td style="border: 1px solid #999; padding: 4px 10px;">0.7356</td></tr><tr><td style="border: 1px solid #999; padding: 4px 10px;">Centroid y at 20 s</td><td style="border: 1px solid #999; padding: 4px 10px;">0.8174</td></tr><tr><td style="border: 1px solid #999; padding: 4px 10px;">RMS frame speed at 20 s</td><td style="border: 1px solid #999; padding: 4px 10px;">1.658e-12</td></tr><tr><td style="border: 1px solid #999; padding: 4px 10px;">Maximum pinned-position error</td><td style="border: 1px solid #999; padding: 4px 10px;">0</td></tr></tbody></table>
+
+		<p>The 10 s and 20 s measurements agree to the displayed precision, and residual motion is at numerical precision. This supplies the required shaded resting-state screenshot, rather than relying on a transient image.</p>
+
+		<p>After motion and contact, each enabled spring receives a Provot-style stretch correction if it exceeds 1.1 times rest length. Unpinned endpoints split the correction; if one endpoint is pinned, the other receives it all. Both pinned endpoints stay fixed. This is a sequential projection: correcting later springs can slightly disturb earlier constraints, so it is a practical stretch limiter rather than a globally converged constraint solve.</p>
+
+
+		<h2>Part 3: Handling collisions with other objects</h2>
+		<h3>Sphere collisions</h3>
+		<p>For an unpinned point inside the sphere, the direction from the sphere center to the point defines a radial surface target. The correction runs from the previous position to that target; friction scales the correction by (1 − f). The position is then the previous position plus the scaled correction. A point exactly at the center uses its previous radial direction, or an upward fallback, to avoid dividing by zero.</p>
+
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse; table-layout: fixed;">
+			  <tr>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p3_sphere_500_1800.png" alt="sphere.json, ks = 500, t = 20 s." style="width: 100%; aspect-ratio: 0.918; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">sphere.json, ks = 500, t = 20 s.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p3_sphere_5000_1800.png" alt="sphere.json, ks = 5000, t = 20 s." style="width: 100%; aspect-ratio: 0.918; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">sphere.json, ks = 5000, t = 20 s.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p3_sphere_50000_1800.png" alt="sphere.json, ks = 50000, t = 20 s." style="width: 100%; aspect-ratio: 0.918; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">sphere.json, ks = 50000, t = 20 s.</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+
+		<p>The low-ks cloth wraps tightly around the sphere and has narrow, long hanging folds. At the default stiffness, the folds are wider and the sheet extends farther sideways. At high stiffness, the cloth resists deformation, spreads out more, and forms a broad, tent-like drape with fewer large folds. The visible top remains supported at roughly the same sphere height in all three cases.</p>
+
+		<table style="margin: 12px auto; border-collapse: collapse;"><thead><tr><th style="border: 1px solid #999; padding: 4px 10px;">ks</th><th style="border: 1px solid #999; padding: 4px 10px;">Lowest cloth y</th><th style="border: 1px solid #999; padding: 4px 10px;">Centroid y</th><th style="border: 1px solid #999; padding: 4px 10px;">RMS frame speed</th></tr></thead><tbody><tr><td style="border: 1px solid #999; padding: 4px 10px;">500</td><td style="border: 1px solid #999; padding: 4px 10px;">-0.2751</td><td style="border: 1px solid #999; padding: 4px 10px;">0.07947</td><td style="border: 1px solid #999; padding: 4px 10px;">0.001754</td></tr><tr><td style="border: 1px solid #999; padding: 4px 10px;">5000</td><td style="border: 1px solid #999; padding: 4px 10px;">-0.2335</td><td style="border: 1px solid #999; padding: 4px 10px;">0.09876</td><td style="border: 1px solid #999; padding: 4px 10px;">0.0002189</td></tr><tr><td style="border: 1px solid #999; padding: 4px 10px;">50000</td><td style="border: 1px solid #999; padding: 4px 10px;">-0.2</td><td style="border: 1px solid #999; padding: 4px 10px;">0.1336</td><td style="border: 1px solid #999; padding: 4px 10px;">4.143e-05</td></tr></tbody></table>
+
+		<p>All three images are taken at t = 20 s, when the cloth has nearly stopped moving. The RMS frame speeds in the table are small but not exactly zero, so they are reported as measured rather than rounded off. The starter code draws the sphere at 92% of its collision radius. Cloth points stop at the full collision radius, but the flat triangles between them cut slightly inside it, so the smaller drawn sphere keeps those triangles from visibly passing through its surface.</p>
+
+		<h3>Plane collisions</h3>
+		<p>A plane contact occurs when the signed distances of the previous and current positions lie on opposite sides of the plane. The current point is projected onto the plane, then offset by 0.0001 toward the side it came from. As with the sphere, friction scales the correction from the previous position. Handling both crossing directions keeps a two-sided plane from incorrectly pushing everything onto only its positive side.</p>
+
+		<figure>
+			<img src="assets/p3_plane_900.png" alt="plane.json at t = 10 s; original blue-and-gold weave texture." style="width:60%"/>
+			<figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">plane.json at t = 10 s; original blue-and-gold weave texture.</figcaption>
+		</figure>
+
+		<p>The sheet lies flat above the plane with the custom texture clearly showing its intact rectangular shape. All vertices have the same height at this captured instant: 0.0004426. The contact rule retains tiny vertical jitter; its frame-based RMS speed is 0.0339 scene units/s. The image is a visually resting contact state, not a claim of mathematically zero velocity.</p>
+
+		<p>In each simulation step, after self-collision, every unpinned point mass is checked against each collision object in the scene, such as the sphere or the plane. Collisions are handled by correcting positions only. A point that has entered an object is moved back to its surface. Its velocity changes automatically, because Verlet integration computes velocity from the difference between the current and previous positions. The sphere and plane are fixed in place, so the cloth cannot push or move them. This simple per-point position correction is the collision model the assignment specifies.</p>
+
+
+		<h2>Part 4: Handling self-collisions</h2>
+		<h3>Falling and folding</h3>
+		<p>Self-collision groups masses into spatial boxes with widths 3 × cloth_width / num_width_points and 3 × cloth_height / num_height_points; the third dimension uses the larger of those values. Flooring signed coordinates gives the box index, including for negative positions. Integer box triples are assigned small unique float IDs, avoiding aliases from a weighted coordinate sum.</p>
+
+		<p>The spatial map is rebuilt each substep. For each unpinned mass, only other masses in its bucket are considered. Pairs closer than twice the thickness contribute a separation correction. Corrections are averaged over contacting neighbors, then divided by the number of simulation substeps. A mass never collides with itself; coincident masses use a deterministic separation direction.</p>
+
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse; table-layout: fixed;">
+			  <tr>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p4_default_45.png" alt="t = 0.5 s: lower cloth first bunches and folds at contact." style="width: 100%; aspect-ratio: 1.333; object-fit: contain; background: #80da80; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">t = 0.5 s: lower cloth first bunches and folds at contact.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p4_default_90.png" alt="t = 1 s: the upper sheet collapses onto the folded lower layers." style="width: 100%; aspect-ratio: 1.333; object-fit: contain; background: #80da80; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">t = 1 s: the upper sheet collapses onto the folded lower layers.</figcaption>
+				</td>
+			  </tr>
+			  <tr>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p4_default_270.png" alt="t = 3 s: multiple overlapping folds spread across the plane." style="width: 100%; aspect-ratio: 1.333; object-fit: contain; background: #80da80; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">t = 3 s: multiple overlapping folds spread across the plane.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p4_default_900.png" alt="t = 10 s: flatter, more restful layers; small motion remains." style="width: 100%; aspect-ratio: 1.333; object-fit: contain; background: #80da80; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">t = 10 s: flatter, more restful layers; small motion remains.</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+
+		<p>All four frames use the default parameters from selfCollision.json and the normal shader, which colors each point by the direction its surface faces. The flat plane faces the same way everywhere, so it stays one solid color, while the cloth changes color wherever it bends. This makes the folds easy to see. The cloth piles up in layered folds instead of passing through itself, which shows that self-collision is working. The cloth also slows down as it settles: its RMS frame speed drops from 1.026 at 0.5 s to 0.02941 at 10 s. It never fully stops, and the pile keeps spreading slowly, because self-collision here only pushes nearby point masses apart and has no friction between layers to hold them in place.</p>
+
+		<h3>Density and stiffness</h3>
+		<p>The top row varies density at fixed ks = 5000; the bottom varies ks at fixed density = 150. Damping remains 0.2%, the vertical perturbation uses the same seed, and all views are taken at 1 s. This holds observation time and camera fixed rather than comparing unrelated stages of the fall.</p>
+
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse; table-layout: fixed;">
+			  <tr>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p4_density_low_90.png" alt="Density 15; ks 5000." style="width: 100%; aspect-ratio: 1.333; object-fit: contain; background: #80da80; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Density 15; ks 5000.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p4_default_90.png" alt="Density 150; ks 5000 (default)." style="width: 100%; aspect-ratio: 1.333; object-fit: contain; background: #80da80; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Density 150; ks 5000 (default).</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p4_density_high_90.png" alt="Density 1500; ks 5000." style="width: 100%; aspect-ratio: 1.333; object-fit: contain; background: #80da80; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Density 1500; ks 5000.</figcaption>
+				</td>
+			  </tr>
+			  <tr>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p4_ks_low_90.png" alt="ks 500; density 150." style="width: 100%; aspect-ratio: 1.333; object-fit: contain; background: #80da80; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">ks 500; density 150.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p4_default_90.png" alt="ks 5000; density 150 (default)." style="width: 100%; aspect-ratio: 1.333; object-fit: contain; background: #80da80; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">ks 5000; density 150 (default).</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p4_ks_high_90.png" alt="ks 50000; density 150." style="width: 100%; aspect-ratio: 1.333; object-fit: contain; background: #80da80; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">ks 50000; density 150.</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+
+		<p>At low density or high ks, the sheet resists compression more strongly relative to its weight and tends toward wider, more coherent folds. At high density or low ks, the initial collapse is softer and more crumpled. Local contact and fold topology make these comparisons less symmetric than the suspended-cloth case: small changes in which masses meet can change the later pattern.</p>
+
+		<table style="margin: 12px auto; border-collapse: collapse;"><thead><tr><th style="border: 1px solid #999; padding: 4px 10px;">Variation</th><th style="border: 1px solid #999; padding: 4px 10px;">RMS speed at 1 s</th><th style="border: 1px solid #999; padding: 4px 10px;">RMS speed at 10 s</th><th style="border: 1px solid #999; padding: 4px 10px;">Maximum y at 10 s</th></tr></thead><tbody><tr><td style="border: 1px solid #999; padding: 4px 10px;">Density 15</td><td style="border: 1px solid #999; padding: 4px 10px;">0.2677</td><td style="border: 1px solid #999; padding: 4px 10px;">0.02667</td><td style="border: 1px solid #999; padding: 4px 10px;">0.06054</td></tr><tr><td style="border: 1px solid #999; padding: 4px 10px;">Default</td><td style="border: 1px solid #999; padding: 4px 10px;">0.3112</td><td style="border: 1px solid #999; padding: 4px 10px;">0.02941</td><td style="border: 1px solid #999; padding: 4px 10px;">0.03944</td></tr><tr><td style="border: 1px solid #999; padding: 4px 10px;">Density 1500</td><td style="border: 1px solid #999; padding: 4px 10px;">0.3372</td><td style="border: 1px solid #999; padding: 4px 10px;">0.09089</td><td style="border: 1px solid #999; padding: 4px 10px;">0.0556</td></tr><tr><td style="border: 1px solid #999; padding: 4px 10px;">ks 500</td><td style="border: 1px solid #999; padding: 4px 10px;">0.3756</td><td style="border: 1px solid #999; padding: 4px 10px;">0.09135</td><td style="border: 1px solid #999; padding: 4px 10px;">0.05662</td></tr><tr><td style="border: 1px solid #999; padding: 4px 10px;">ks 50000</td><td style="border: 1px solid #999; padding: 4px 10px;">0.2814</td><td style="border: 1px solid #999; padding: 4px 10px;">0.03594</td><td style="border: 1px solid #999; padding: 4px 10px;">0.05946</td></tr></tbody></table>
+
+		<p>The softer/heavier settings keep more residual motion at 10 s in these runs. The table reports this particular experiment; it does not imply every fold height or speed must vary monotonically. Spatial buckets reduce candidate work substantially, but this same-cell, point-sample method does not guarantee continuous triangle-level nonintersection across bucket boundaries.</p>
+
+
+		<h2>Part 5: Shaders</h2>
+		<h3>Shaders and Blinn–Phong</h3>
+		<p>A shader program pairs small GPU programs operating at different stages. The vertex shader transforms positions and passes normals, tangents, and UV coordinates onward. Rasterization interpolates those values across triangles. The fragment shader uses the interpolated values, lights, and textures to assign each fragment’s color. A fragment shader can change appearance without changing the underlying mesh.</p>
+
+		<p>Blinn–Phong adds three terms: ambient light supplies a small uniform base; diffuse light scales with the cosine between normal and light direction; specular light produces a highlight when the normal aligns with the halfway direction between the light and viewer. The point-light diffuse and specular terms decrease with squared distance. Here ka = 0.1, Ia = 1, kd = 1, ks_specular = 0.4, and shininess p = 32. This ks_specular is unrelated to spring stiffness.</p>
+
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse; table-layout: fixed;">
+			  <tr>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p5_phong_ambient.png" alt="Ambient only: constant base color." style="width: 100%; aspect-ratio: 1.564; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Ambient only: constant base color.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p5_phong_diffuse.png" alt="Diffuse only: shape-dependent illumination." style="width: 100%; aspect-ratio: 1.564; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Diffuse only: shape-dependent illumination.</figcaption>
+				</td>
+			  </tr>
+			  <tr>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p5_phong_specular.png" alt="Specular only: view-dependent highlights." style="width: 100%; aspect-ratio: 1.585; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Specular only: view-dependent highlights.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p5_phong_full.png" alt="Full Blinn–Phong: sum of the three components." style="width: 100%; aspect-ratio: 1.585; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Full Blinn–Phong: sum of the three components.</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+
+		<p>All four use the identical four-pin cloth state at t = 10 s, camera, and light. Only the component weights change. The ambient view has no directional shape cues, the diffuse view reveals the bowl, and the specular view isolates highlights along normals aligned with the half-vector.</p>
+
+		<h3>Texture and bump mapping</h3>
+		<p>The texture shader samples a 2D image at the cloth’s interpolated UV coordinates. The custom blue-and-gold weave was generated for this assignment: alternating diagonal bands establish the design, and a fine periodic modulation creates thread-like highlights. It replaces texture_1.png and is sampled directly, so its pattern follows the cloth’s deformation.</p>
+
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse; table-layout: fixed;">
+			  <tr>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p5_texture_cloth.png" alt="Custom weave mapped onto the four-pin cloth." style="width: 100%; aspect-ratio: 1.564; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Custom weave mapped onto the four-pin cloth.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p5_bump_cloth.png" alt="Bump mapping on the same cloth; kh = 0.02, kn = 100." style="width: 100%; aspect-ratio: 1.564; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Bump mapping on the same cloth; kh = 0.02, kn = 100.</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse; table-layout: fixed;">
+			  <tr>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/custom-weave.png" alt="Original custom color texture." style="width: 100%; aspect-ratio: 1.000; object-fit: contain; background: #deac43; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Original custom color texture.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/height-ripples.png" alt="Original height_ripples.png: shared bump/displacement height field." style="width: 100%; aspect-ratio: 1.000; object-fit: contain; background: #929292; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Original height_ripples.png: shared bump/displacement height field.</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+
+		<p>Bump mapping estimates height changes using a one-texel step in u and v. These differences, scaled by kh and kn, produce the local normal (−dU, −dV, 1). The tangent, bitangent, and original normal form a TBN frame that transforms this local normal into the lighting frame. The interpolated tangent is orthogonalized before use, and the resulting normal is normalized.</p>
+
+		<p>The cloth acquires alternating illuminated ridges while keeping its silhouette and original triangle positions. The height map is an original periodic sinusoidal surface, not the starter’s default texture_2.png. Both bump and displacement shaders sample this exact same height_ripples.png, loaded into the height-map texture slot.</p>
+
+		<h3>Bump vs. displacement</h3>
+		<p>Displacement mapping adds normal × sampled_height × kh to each object-space vertex before model and view-projection transforms. It then uses the same bump-based normal perturbation in its fragment shader. Bump mapping leaves the mesh positions unchanged; displacement therefore changes both shading and silhouette.</p>
+
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse; table-layout: fixed;">
+			  <tr>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p5_bump_sphere_16.png" alt="Bump mapping; sphere 16 × 16, kh = 0.15, kn = 30." style="width: 100%; aspect-ratio: 0.987; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Bump mapping; sphere 16 × 16, kh = 0.15, kn = 30.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p5_displacement_sphere_16.png" alt="Displacement mapping; sphere 16 × 16, kh = 0.15, kn = 30." style="width: 100%; aspect-ratio: 0.987; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Displacement mapping; sphere 16 × 16, kh = 0.15, kn = 30.</figcaption>
+				</td>
+			  </tr>
+			  <tr>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p5_bump_sphere_128.png" alt="Bump mapping; sphere 128 × 128, kh = 0.15, kn = 30." style="width: 100%; aspect-ratio: 0.987; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Bump mapping; sphere 128 × 128, kh = 0.15, kn = 30.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p5_displacement_sphere_128.png" alt="Displacement mapping; sphere 128 × 128, kh = 0.15, kn = 30." style="width: 100%; aspect-ratio: 0.987; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Displacement mapping; sphere 128 × 128, kh = 0.15, kn = 30.</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+
+		<p>At 16 × 16 (<code>-o 16 -a 16</code>), the bumped sphere retains its coarse, polygonal outline even though the fragment lighting suggests ridges. Displacement visibly reshapes that coarse outline, but the peaks are angular and the sampled pattern is uneven. At 128 × 128 (<code>-o 128 -a 128</code>), bump shading looks smoother but still cannot alter the outline. The displaced sphere has much smoother geometric ripples and a clearly scalloped silhouette. More triangles help displacement represent the height field; extra fragments alone cannot create new silhouette geometry.</p>
+
+		<h3>Environment reflections</h3>
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse; table-layout: fixed;">
+			  <tr>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p5_mirror_cloth.png" alt="Mirror shader on the four-pin cloth, t = 10 s." style="width: 100%; aspect-ratio: 1.563; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Mirror shader on the four-pin cloth, t = 10 s.</figcaption>
+				</td>
+				<td style="text-align: center; vertical-align: top; padding: 4px;">
+				  <img src="assets/p5_mirror_sphere_128.png" alt="Mirror shader on the sphere, 128 × 128 tessellation." style="width: 100%; aspect-ratio: 1.563; object-fit: contain; background: #242b36; display: block;"/>
+				  <figcaption style="font-size: 14px; line-height: 1.35; margin: 6px 4px 12px;">Mirror shader on the sphere, 128 × 128 tessellation.</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+
+		<p>For each fragment, the camera-to-surface direction is reflected around the normalized surface normal. That reflected direction selects incoming color from the cubemap. The bridge structure and sky therefore bend across the cloth’s changing normals, while the sphere produces a compact curved reflection of the same environment.</p>
+
+		<h2>(Optional) Part 6: Extra Credit - Additional cloth simulation features!</h2>
+		<p>Not attempted.</p>
+
+
+		<h2>Acknowledgement of AI</h2>
+		<p><strong>Acknowledgment of AI assistance.</strong> I used OpenAI codex to help me with conceptual explanations, regression tests, execution of experiements and related analysis, and debugging. It also helped with procedural textures. Claude helped me proofread the final written report and help bring clarity to some paragraphs in the final report.</p>
+		<p>OpenAI Codex also generated the C++ cloth simulation and GLSL shader implementation and drafted the initial report.</p>
+		</div>
+	</body>
+</html>
